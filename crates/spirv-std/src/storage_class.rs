@@ -9,7 +9,7 @@
 
 use core::{
     marker::PhantomData,
-    ops::{Deref, DerefMut, Index, IndexMut},
+    ops::{Deref, DerefMut, Index},
 };
 
 /// Graphics uniform blocks and buffer blocks.
@@ -18,9 +18,15 @@ use core::{
 /// all work groups. Requires "Shader" capability.
 #[allow(unused_attributes)]
 #[spirv(uniform)]
-pub struct Uniform;
-impl Descriptor for Uniform {}
-impl DescriptorMut for Uniform {}
+pub struct Uniform<T: ?Sized> {
+    _data: *mut T,
+}
+
+impl<T: ?Sized> StorageClass for Uniform<T> {
+    type Target = T;
+}
+
+impl<T: ?Sized> StorageClassMut for Uniform<T> {}
 
 /// Graphics storage buffers (buffer blocks).
 ///
@@ -28,9 +34,15 @@ impl DescriptorMut for Uniform {}
 /// in all invocations in all work groups.
 #[allow(unused_attributes)]
 #[spirv(storage_buffer)]
-pub struct StorageBuffer;
-impl Descriptor for StorageBuffer {}
-impl DescriptorMut for StorageBuffer {}
+pub struct StorageBuffer<T: ?Sized> {
+    _data: *mut T,
+}
+
+impl<T: ?Sized> StorageClass for StorageBuffer<T> {
+    type Target = T;
+}
+
+impl<T: ?Sized> StorageClassMut for StorageBuffer<T> {}
 
 /// Graphics uniform memory. OpenCL constant memory.
 ///
@@ -39,8 +51,13 @@ impl DescriptorMut for StorageBuffer {}
 /// read-only. They may have initializers, as allowed by the client API.
 #[allow(unused_attributes)]
 #[spirv(uniform_constant)]
-pub struct UniformConstant;
-impl Descriptor for UniformConstant {}
+pub struct UniformConstant<T: ?Sized> {
+    _data: *mut T,
+}
+
+impl<T: ?Sized> StorageClass for UniformConstant<T> {
+    type Target = T;
+}
 
 /// Input from pipeline.
 ///
@@ -284,64 +301,89 @@ storage_class! {
 /// The last two const parameters are the `Set` then `Binding` numbers.
 #[allow(unused_attributes)]
 #[spirv(bind)]
-pub struct Bind<'a, T: ?Sized, DescriptorType: DescriptorOrDescriptorArray + ?Sized, const SET: usize, const BINDING: usize> {
-    ptr: *mut T,
-    _phantom: PhantomData<&'a DescriptorType>,
+#[derive(Copy, Clone)]
+pub struct Bind<S: StorageClassOrStorageClassArray + ?Sized, const SET: usize, const BINDING: usize>
+{
+    //_marker: PhantomData<S>,
+    ptr: *mut S::Target,
 }
 
-impl<'a, T: ?Sized, DescriptorType: Descriptor, const SET: usize, const BINDING: usize>
-Deref for Bind<'a, T, DescriptorType, SET, BINDING>
-{
-    type Target = T;
-    fn deref(&self) -> &T {
-        unsafe{ &*self.ptr }
-    }
-}
-
-impl<'a, T: ?Sized, DescriptorType: Descriptor + DescriptorMut, const SET: usize, const BINDING: usize>
-DerefMut for Bind<'a, T, DescriptorType, SET, BINDING>
-{
-    fn deref_mut(&mut self) -> &mut T {
-        unsafe { &mut *self.ptr }
-    }
-}
-
-impl<'a, T: ?Sized, DescriptorType: DescriptorArray + ?Sized, const SET: usize, const BINDING: usize>
-Index<usize> for Bind<'a, T, DescriptorType, SET, BINDING>
-{
-    type Output = T;
+impl<S: StorageClassArray + ?Sized, const SET: usize, const BINDING: usize> Bind<S, SET, BINDING> {
     #[allow(unused_attributes)]
     #[spirv(index_descriptor_array)]
-    #[allow(unused)]
-    fn index(&self, index: usize) -> &T {
-        // compiler implemented
-        unreachable!()
+    #[allow(unused_variables)]
+    pub fn index<'a>(self, index: usize) -> &'a S::Target {
+        //compiler implemented
+        unimplemented!()
     }
-}
 
-impl<'a, T: ?Sized, DescriptorType: DescriptorArray + DescriptorMut + ?Sized, const SET: usize, const BINDING: usize>
-IndexMut<usize> for Bind<'a, T, DescriptorType, SET, BINDING>
-{
     #[allow(unused_attributes)]
     #[spirv(index_descriptor_array)]
-    #[allow(unused)]
-    fn index_mut(&mut self, index: usize) -> &mut T {
-        // compiler implemented
-        core::unreachable!()
+    #[allow(unused_variables)]
+    pub unsafe fn index_mut<'a>(self, index: usize) -> &'a mut S::Target {
+        //compiler implemented
+        unimplemented!()
     }
 }
 
-pub trait Descriptor {}
+impl<S: StorageClass, const SET: usize, const BINDING: usize> Deref for Bind<S, SET, BINDING> {
+    type Target = S::Target;
+    fn deref(&self) -> &S::Target {
+        unsafe { &*self.ptr }
+    }
+}
 
-pub trait DescriptorMut {}
-impl<DescriptorType: DescriptorMut, const N: usize> DescriptorMut for [DescriptorType; N] {}
-impl<DescriptorType: DescriptorMut> DescriptorMut for [DescriptorType] {}
+impl<S: StorageClassArray + ?Sized, const SET: usize, const BINDING: usize> Index<usize>
+    for Bind<S, SET, BINDING>
+where
+    Self: Copy,
+{
+    type Output = S::Target;
+    fn index(&self, index: usize) -> &S::Target {
+        Self::index(*self, index)
+    }
+}
 
-pub trait DescriptorOrDescriptorArray {}
-impl<DescriptorType: Descriptor> DescriptorOrDescriptorArray for DescriptorType {}
-impl<DescriptorType: Descriptor, const N: usize> DescriptorOrDescriptorArray for [DescriptorType; N] {}
-impl<DescriptorType: Descriptor> DescriptorOrDescriptorArray for [DescriptorType] {}
+pub trait StorageClass {
+    type Target: ?Sized;
+}
 
-pub trait DescriptorArray: DescriptorOrDescriptorArray {}
-impl<DescriptorType: Descriptor, const N: usize> DescriptorArray for [DescriptorType; N] {}
-impl<DescriptorType: Descriptor> DescriptorArray for [DescriptorType] {}
+pub trait StorageClassMut {}
+impl<S: StorageClassMut> StorageClassMut for [S] {}
+impl<S: StorageClassMut, const N: usize> StorageClassMut for [S; N] {}
+
+pub trait StorageClassOrStorageClassArray {
+    type Target: ?Sized;
+}
+impl<S: StorageClass> StorageClassOrStorageClassArray for S {
+    type Target = S::Target;
+}
+impl<S: StorageClass> StorageClassOrStorageClassArray for [S] {
+    type Target = S::Target;
+}
+impl<S: StorageClass, const N: usize> StorageClassOrStorageClassArray for [S; N] {
+    type Target = S::Target;
+}
+
+pub trait StorageClassArray: StorageClassOrStorageClassArray {}
+impl<S: StorageClass> StorageClassArray for [S] {}
+impl<S: StorageClass, const N: usize> StorageClassArray for [S; N] {}
+
+// This is unsafe.
+//impl<S: StorageClass + StorageClassMut, const SET: usize, const BINDING: usize>
+//DerefMut for Bind<S, SET, BINDING>
+//{
+//    fn deref_mut(&mut self) -> &mut S::Target {
+//        unsafe { &mut *self.ptr }
+//    }
+//}
+
+// This is unsafe.
+//impl<S: StorageClassArray + StorageClassMut + ?Sized, const SET: usize, const BINDING: usize>
+//IndexMut<usize> for Bind<S, SET, BINDING>
+//{
+//    fn index_mut(&mut self, index: usize) -> &mut S::Target {
+//        //compiler implemented
+//        unimplemented!()
+//    }
+//}

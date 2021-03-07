@@ -328,7 +328,10 @@ impl Symbols {
             ("sampled_image", SpirvAttribute::SampledImage),
             ("unroll_loops", SpirvAttribute::UnrollLoops),
             ("bind", SpirvAttribute::Bind),
-            ("index_descriptor_array", SpirvAttribute::IndexDescriptorArray),
+            (
+                "index_descriptor_array",
+                SpirvAttribute::IndexDescriptorArray,
+            ),
         ]
         .iter()
         .cloned();

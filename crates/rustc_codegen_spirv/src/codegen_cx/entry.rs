@@ -6,8 +6,8 @@ use rspirv::dr::Operand;
 use rspirv::spirv::{Decoration, ExecutionModel, FunctionControl, StorageClass, Word};
 use rustc_hir as hir;
 use rustc_middle::{
-    ty::{layout::HasParamEnv, Instance, Ty, TyKind, AdtDef},
     mir::terminator::Mutability,
+    ty::{layout::HasParamEnv, AdtDef, Instance, Ty, TyKind},
 };
 use rustc_span::Span;
 use rustc_target::abi::{
@@ -140,7 +140,10 @@ impl<'tcx> CodegenCx<'tcx> {
             });
             let (argument, storage_class) =
                 self.declare_parameter(arg, hir_param, arg_abi, &mut decoration_locations);
-            if new_spirv || storage_class == StorageClass::Input || storage_class == StorageClass::Output {
+            if new_spirv
+                || storage_class == StorageClass::Input
+                || storage_class == StorageClass::Output
+            {
                 // SPIR-V <= v1.3 only includes Input and Output in the interface.
                 interface.push(argument);
             }
@@ -185,8 +188,13 @@ impl<'tcx> CodegenCx<'tcx> {
         //    arguments[len_idx as usize] =
         //        emit.array_length(len_t, None, ptr_struct_rta, 0).unwrap();
         //}
-        emit.function_call(entry_func_return_type, None, entry_func.def_cx(self), arguments)
-            .unwrap();
+        emit.function_call(
+            entry_func_return_type,
+            None,
+            entry_func.def_cx(self),
+            arguments,
+        )
+        .unwrap();
         emit.ret().unwrap();
         emit.end_function().unwrap();
         emit.entry_point(execution_model, fn_id, name, interface);
@@ -200,8 +208,8 @@ impl<'tcx> CodegenCx<'tcx> {
         arg_abi: &ArgAbi<'tcx, Ty<'tcx>>,
         decoration_locations: &mut HashMap<StorageClass, u32>,
     ) -> (Word, StorageClass) {
-        let (storage_class, mut spirv_binding) = self.get_storage_class(arg_abi)
-            .unwrap_or_else(|| {
+        let (storage_class, mut spirv_binding) =
+            self.get_storage_class(arg_abi).unwrap_or_else(|| {
                 self.tcx.sess.span_fatal(
                     hir_param.span,
                     &format!("invalid entry param type `{}`", arg_abi.layout.ty),
@@ -243,16 +251,13 @@ impl<'tcx> CodegenCx<'tcx> {
                 );
             }
             SpirvBinding::Location(location) => {
-                let last_location = decoration_locations
-                    .entry(storage_class)
-                    .or_insert(0);
+                let last_location = decoration_locations.entry(storage_class).or_insert(0);
                 if location >= *last_location {
                     *last_location = location + 1;
                 } else {
-                    self.tcx.sess.span_err(
-                        hir_param.span,
-                        "Locations must appear in ascending order"
-                    );
+                    self.tcx
+                        .sess
+                        .span_err(hir_param.span, "Locations must appear in ascending order");
                 }
                 self.emit_global().decorate(
                     variable,
@@ -265,9 +270,7 @@ impl<'tcx> CodegenCx<'tcx> {
                 // individually.
                 // TODO: Is this right for UniformConstant? Do they share locations with
                 // input/outpus?
-                let location = decoration_locations
-                    .entry(storage_class)
-                    .or_insert(0);
+                let location = decoration_locations.entry(storage_class).or_insert(0);
                 self.emit_global().decorate(
                     variable,
                     Decoration::Location,
@@ -286,8 +289,12 @@ impl<'tcx> CodegenCx<'tcx> {
     ) -> Option<(StorageClass, SpirvBinding)> {
         let (adt, substs) = match arg_abi.layout.ty.kind() {
             TyKind::Adt(adt, substs) => (adt, substs),
-            TyKind::Ref(_, _, Mutability::Not) => return Some((StorageClass::Input, SpirvBinding::InferredLocation)),
-            TyKind::Ref(_, _, Mutability::Mut) => return Some((StorageClass::Output, SpirvBinding::InferredLocation)),
+            TyKind::Ref(_, _, Mutability::Not) => {
+                return Some((StorageClass::Input, SpirvBinding::InferredLocation))
+            }
+            TyKind::Ref(_, _, Mutability::Mut) => {
+                return Some((StorageClass::Output, SpirvBinding::InferredLocation))
+            }
             _ => return None,
         };
         for attr in parse_attrs(self, self.tcx.get_attrs(adt.did)) {
@@ -297,18 +304,26 @@ impl<'tcx> CodegenCx<'tcx> {
                     return if let (Some(location), None) = (consts.next(), consts.next()) {
                         Some((
                             StorageClass::Output,
-                            SpirvBinding::Location(location.eval_usize(self.tcx, self.param_env()) as u32))
-                        )
-                    } else { None }
+                            SpirvBinding::Location(
+                                location.eval_usize(self.tcx, self.param_env()) as u32
+                            ),
+                        ))
+                    } else {
+                        None
+                    };
                 }
                 SpirvAttribute::StorageClass(StorageClass::Input) => {
                     let mut consts = substs.consts();
                     return if let (Some(location), None) = (consts.next(), consts.next()) {
                         Some((
                             StorageClass::Input,
-                            SpirvBinding::Location(location.eval_usize(self.tcx, self.param_env()) as u32))
-                        )
-                    } else { None }
+                            SpirvBinding::Location(
+                                location.eval_usize(self.tcx, self.param_env()) as u32
+                            ),
+                        ))
+                    } else {
+                        None
+                    };
                 }
                 SpirvAttribute::StorageClass(StorageClass::PushConstant) => {
                     return Some((StorageClass::PushConstant, SpirvBinding::PushConstant))
@@ -317,40 +332,42 @@ impl<'tcx> CodegenCx<'tcx> {
                     let parse_storage_class_attr = |adt: &AdtDef| {
                         for attr in parse_attrs(self, self.tcx.get_attrs(adt.did)) {
                             if let SpirvAttribute::StorageClass(storage_class) = attr {
-                                return Some(storage_class)
+                                return Some(storage_class);
                             }
                         }
                         None
                     };
                     let descriptor_set = {
                         let mut consts = substs.consts();
-                        if let (Some(set), Some(binding), None) = (consts.next(), consts.next(), consts.next()) {
+                        if let (Some(set), Some(binding), None) =
+                            (consts.next(), consts.next(), consts.next())
+                        {
                             SpirvBinding::DescriptorSet {
                                 set: set.eval_usize(self.tcx, self.param_env()) as u32,
-                                binding: binding.eval_usize(self.tcx, self.param_env()) as u32
+                                binding: binding.eval_usize(self.tcx, self.param_env()) as u32,
                             }
                         } else {
-                            return None
+                            return None;
                         }
                     };
-                    match substs.types().last().unwrap().kind() {
-                        TyKind::Adt(adt, _) => if let Some(storage_class) = parse_storage_class_attr(adt) {
-                            return Some((storage_class, descriptor_set))
-                        }
-                        TyKind::Slice(ty) => if let TyKind::Adt(adt, _) = ty.kind() {
+                    match substs.types().next().unwrap().kind() {
+                        TyKind::Adt(adt, _) => {
                             if let Some(storage_class) = parse_storage_class_attr(adt) {
-                                return Some((
-                                    storage_class,
-                                    descriptor_set
-                                ))
+                                return Some((storage_class, descriptor_set));
                             }
                         }
-                        TyKind::Array(ty, _) => if let TyKind::Adt(adt, _) = ty.kind() {
-                            if let Some(storage_class) = parse_storage_class_attr(adt) {
-                                return Some((
-                                    storage_class,
-                                    descriptor_set
-                                ))
+                        TyKind::Slice(ty) => {
+                            if let TyKind::Adt(adt, _) = ty.kind() {
+                                if let Some(storage_class) = parse_storage_class_attr(adt) {
+                                    return Some((storage_class, descriptor_set));
+                                }
+                            }
+                        }
+                        TyKind::Array(ty, _) => {
+                            if let TyKind::Adt(adt, _) = ty.kind() {
+                                if let Some(storage_class) = parse_storage_class_attr(adt) {
+                                    return Some((storage_class, descriptor_set));
+                                }
                             }
                         }
                         _ => {}
