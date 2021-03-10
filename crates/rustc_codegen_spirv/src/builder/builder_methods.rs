@@ -1975,7 +1975,7 @@ impl<'a, 'tcx> BuilderMethods<'a, 'tcx> for Builder<'a, 'tcx> {
             self.abort();
             self.undef(result_type)
         } else if self.index_descriptor_array_id.borrow().contains(&llfn_def) {
-            let base = args[0].def(self);
+            let base = self.load(args[0], Align::from_bytes(0).unwrap()).def(self);
             let index = args[1].def(self);
             self.emit()
                 .access_chain(result_type, None, base, core::iter::once(index))

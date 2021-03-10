@@ -444,24 +444,14 @@ fn trans_type_impl<'tcx>(
 }
 
 fn trans_bind<'tcx>(cx: &CodegenCx<'tcx>, desc_ty: Ty<'tcx>, span: Span) -> Word {
-    let data_type = {
-        if let TyKind::Adt(_, substs) = cx.layout_of(desc_ty).ty.kind() {
-            trans_type_impl(
-                cx,
-                span,
-                cx.layout_of(substs.types().next().unwrap()),
-                false,
-            )
-        } else {
-            cx.tcx.sess.span_fatal(
-                span,
-                "Bind storage class parameter must have data type parameter type must have a generic image type"
-            )
-        }
-    };
     let desc_type = match desc_ty.kind() {
         // Single Descriptor
-        TyKind::Adt(..) => data_type,
+        TyKind::Adt(_, substs) => trans_type_impl(
+            cx,
+            span,
+            cx.layout_of(substs.types().next().unwrap()),
+            false,
+        ),
         //TyKind::Array(_, count) if count.eval_usize() == 0 => {
         //    TODO: zombie
         //}
@@ -471,7 +461,20 @@ fn trans_bind<'tcx>(cx: &CodegenCx<'tcx>, desc_ty: Ty<'tcx>, span: Span) -> Word
         // Descriptor array
         // NOTE: the element type may be unsized, so this cannot go through
         // the usual SpirvType constructor
-        TyKind::Array(_, count) => {
+        TyKind::Array(ty, count) => {
+            let data_type = if let TyKind::Adt(_, substs) = ty.kind() {
+                trans_type_impl(
+                    cx,
+                    span,
+                    cx.layout_of(substs.types().next().unwrap()),
+                    false,
+                )
+            } else {
+                cx.tcx.sess.span_fatal(
+                    span,
+                    "Bind storage class parameter must have data type parameter"
+                )
+            };
             let count = cx.constant_u32(span, count.eval_usize(cx.tcx, cx.param_env()) as u32);
             let spirv_type = SpirvType::Array {
                 element: data_type,
@@ -496,7 +499,20 @@ fn trans_bind<'tcx>(cx: &CodegenCx<'tcx>, desc_ty: Ty<'tcx>, span: Span) -> Word
         // Runtime descriptor array
         // NOTE: the element type may be unsized, so this cannot go through
         // the usual SpirvType constructor
-        TyKind::Slice(..) => {
+        TyKind::Slice(ty) => {
+            let data_type = if let TyKind::Adt(_, substs) = ty.kind() {
+                trans_type_impl(
+                    cx,
+                    span,
+                    cx.layout_of(substs.types().next().unwrap()),
+                    false,
+                )
+            } else {
+                cx.tcx.sess.span_fatal(
+                    span,
+                    "Bind storage class parameter must have data type parameter"
+                )
+            };
             let spirv_type = SpirvType::RuntimeArray { element: data_type };
             let mut type_cache_defs = cx.type_cache.type_defs.borrow_mut();
             if let Some(cached) = type_cache_defs.get_by_right(&spirv_type).copied() {

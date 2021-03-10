@@ -16,46 +16,49 @@ use core::{
 ///
 /// Shared externally, visible across all functions in all invocations in
 /// all work groups. Requires "Shader" capability.
+/// Slices/runtime arrays are not supported yet.
 #[allow(unused_attributes)]
 #[spirv(uniform)]
-pub struct Uniform<T: ?Sized> {
-    _data: *mut T,
+pub struct Uniform<'a, T> {
+    _ptr: &'a mut T,
 }
 
-impl<T: ?Sized> StorageClass for Uniform<T> {
+impl<'a, T> StorageClass for Uniform<'a, T> {
     type Target = T;
 }
 
-impl<T: ?Sized> StorageClassMut for Uniform<T> {}
+impl<'a, T> StorageClassMut for Uniform<'a, T> {}
 
 /// Graphics storage buffers (buffer blocks).
 ///
 /// Shared externally, readable and writable, visible across all functions
 /// in all invocations in all work groups.
+/// Slices/runtime arrays are not supported yet.
 #[allow(unused_attributes)]
 #[spirv(storage_buffer)]
-pub struct StorageBuffer<T: ?Sized> {
-    _data: *mut T,
+pub struct StorageBuffer<'a, T> {
+    _ptr: &'a mut T,
 }
 
-impl<T: ?Sized> StorageClass for StorageBuffer<T> {
+impl<'a, T> StorageClass for StorageBuffer<'a, T> {
     type Target = T;
 }
 
-impl<T: ?Sized> StorageClassMut for StorageBuffer<T> {}
+impl<'a, T> StorageClassMut for StorageBuffer<'a, T> {}
 
 /// Graphics uniform memory. OpenCL constant memory.
 ///
 /// Shared externally, visible across all functions in all invocations in
 /// all work groups. Variables declared with this storage class are
 /// read-only. They may have initializers, as allowed by the client API.
+/// Slices/runtime arrays are not supported yet.
 #[allow(unused_attributes)]
 #[spirv(uniform_constant)]
-pub struct UniformConstant<T: ?Sized> {
-    _data: *mut T,
+pub struct UniformConstant<'a, T> {
+    _ptr: &'a T,
 }
 
-impl<T: ?Sized> StorageClass for UniformConstant<T> {
+impl<'a, T> StorageClass for UniformConstant<'a, T> {
     type Target = T;
 }
 
@@ -301,46 +304,47 @@ storage_class! {
 /// The last two const parameters are the `Set` then `Binding` numbers.
 #[allow(unused_attributes)]
 #[spirv(bind)]
-#[derive(Copy, Clone)]
-pub struct Bind<S: StorageClassOrStorageClassArray + ?Sized, const SET: usize, const BINDING: usize>
+pub struct Bind<'a, S: StorageClassOrStorageClassArray + ?Sized, const SET: usize, const BINDING: usize>
 {
-    //_marker: PhantomData<S>,
-    ptr: *mut S::Target,
+    ptr: &'a mut S::Target,
 }
 
-impl<S: StorageClassArray + ?Sized, const SET: usize, const BINDING: usize> Bind<S, SET, BINDING> {
-    #[allow(unused_attributes)]
-    #[spirv(index_descriptor_array)]
-    #[allow(unused_variables)]
-    pub fn index<'a>(self, index: usize) -> &'a S::Target {
-        //compiler implemented
-        unimplemented!()
-    }
-
-    #[allow(unused_attributes)]
-    #[spirv(index_descriptor_array)]
-    #[allow(unused_variables)]
-    pub unsafe fn index_mut<'a>(self, index: usize) -> &'a mut S::Target {
-        //compiler implemented
-        unimplemented!()
+impl<'a, S: StorageClass + StorageClassMut, const SET: usize, const BINDING: usize>
+    Bind<'a, S, SET, BINDING>
+{
+    pub unsafe fn deref_mut(&mut self) -> &mut S::Target {
+        &mut *self.ptr
     }
 }
 
-impl<S: StorageClass, const SET: usize, const BINDING: usize> Deref for Bind<S, SET, BINDING> {
+impl<'a, S: StorageClassArray + StorageClassMut + ?Sized, const SET: usize, const BINDING: usize> Bind<'a, S, SET, BINDING> {
+    #[allow(unused_attributes)]
+    #[spirv(index_descriptor_array)]
+    #[allow(unused_variables)]
+    pub unsafe fn index_mut(&mut self, index: usize) -> &'a mut S::Target {
+        //compiler implemented
+        unimplemented!()
+    }
+}
+
+impl<'a, S: StorageClass, const SET: usize, const BINDING: usize> Deref for Bind<'a, S, SET, BINDING> {
     type Target = S::Target;
     fn deref(&self) -> &S::Target {
-        unsafe { &*self.ptr }
+        self.ptr
     }
 }
 
-impl<S: StorageClassArray + ?Sized, const SET: usize, const BINDING: usize> Index<usize>
-    for Bind<S, SET, BINDING>
-where
-    Self: Copy,
+impl<'a, S: StorageClassArray + ?Sized, const SET: usize, const BINDING: usize> Index<usize>
+    for Bind<'a, S, SET, BINDING>
 {
     type Output = S::Target;
+
+    #[allow(unused_attributes)]
+    #[spirv(index_descriptor_array)]
+    #[allow(unused_variables)]
     fn index(&self, index: usize) -> &S::Target {
-        Self::index(*self, index)
+        //compiler implemented
+        unimplemented!()
     }
 }
 
