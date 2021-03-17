@@ -415,7 +415,7 @@ pub fn main(i: &i32) {
 fn cf_for_range() {
     val(r#"
 #[spirv(fragment)]
-pub fn main(i: Input<i32>) {
+pub fn main(i: &i32) {
     for _ in 0..*i {
     }
 }
