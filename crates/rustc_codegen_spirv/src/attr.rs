@@ -106,11 +106,19 @@ impl CheckSpirvAttrVisitor<'_> {
                     _ => Err(Expected("function or closure")),
                 },
 
+                SpirvAttribute::IndexDescriptorArray => match target {
+                    Target::Fn
+                    | Target::Method(MethodKind::Trait { body: true })
+                    | Target::Method(MethodKind::Inherent) => Ok(()),
+                    _ => Err(Expected("function or method")),
+                }
+
                 SpirvAttribute::StorageClass(_)
-                | SpirvAttribute::ImageType { .. }
+                | SpirvAttribute::Image
                 | SpirvAttribute::Sampler
                 | SpirvAttribute::SampledImage
-                | SpirvAttribute::Block => match target {
+                | SpirvAttribute::Block
+                | SpirvAttribute::Bind => match target {
                     Target::Struct => {
                         // FIXME(eddyb) further check type attribute validity,
                         // e.g. layout, generics, other attributes, etc.

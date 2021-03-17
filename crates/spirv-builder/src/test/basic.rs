@@ -394,7 +394,7 @@ OpFunctionEnd"#,
 fn signum() {
     val(r#"
 #[spirv(fragment)]
-pub fn main(i: Input<f32>, mut o: Output<f32>) {
+pub fn main(i: &f32, o: &mut f32) {
     *o = i.signum();
 }"#);
 }
@@ -491,7 +491,7 @@ pub fn main() {
 fn mat3_vec3_multiply() {
     val(r#"
 #[spirv(fragment)]
-pub fn main(input: Input<glam::Mat3>, mut output: Output<glam::Vec3>) {
+pub fn main(input: &glam::Mat3, output: &mut glam::Vec3) {
     let input = *input;
     let vector = input * glam::Vec3::new(1.0, 2.0, 3.0);
     *output = vector;
@@ -574,7 +574,7 @@ OpFunctionEnd",
 fn image_read() {
     val(r#"
 #[spirv(fragment)]
-pub fn main(image: UniformConstant<StorageImage2d>, mut output: Output<glam::Vec2>) {
+pub fn main(image: Bind<UniformConstant<StorageImage2d>, 0, 0>, output: &mut glam::Vec2) {
     let coords =  image.read(glam::IVec2::new(0, 1));
     *output = coords;
 }
@@ -585,7 +585,7 @@ pub fn main(image: UniformConstant<StorageImage2d>, mut output: Output<glam::Vec
 fn image_write() {
     val(r#"
 #[spirv(fragment)]
-pub fn main(input: Input<glam::Vec2>, image: UniformConstant<StorageImage2d>) {
+pub fn main(input: &glam::Vec2, image: Bind<UniformConstant<StorageImage2d>, 0, 0>) {
     let texels = *input;
     unsafe {
         image.write(glam::UVec2::new(0, 1), texels);
@@ -598,7 +598,7 @@ pub fn main(input: Input<glam::Vec2>, image: UniformConstant<StorageImage2d>) {
 fn image_fetch() {
     val(r#"
 #[spirv(fragment)]
-pub fn main(image: UniformConstant<Image2d>, mut output: Output<glam::Vec4>) {
+pub fn main(image: Bind<UniformConstant<Image2d>, 0, 0>, output: &mut glam::Vec4) {
     let texel = image.fetch(glam::IVec2::new(0, 1));
     *output = texel;
 }
@@ -622,7 +622,7 @@ macro_rules! test_copy_via_raw_ptr {
             }
         }
         #[spirv(fragment)]
-        pub fn main(i: Input<f32>, mut o: Output<f32>) {
+        pub fn main(i: &f32, o: &mut f32) {
             copy_via_raw_ptr(&i, &mut o);
             // FIXME(eddyb) above call results in inlining `copy_via_raw_ptr`,
             // due to the to `Input`/`Output` storage classes, so to get the

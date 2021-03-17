@@ -4,7 +4,7 @@ use super::val;
 fn cf_while() {
     val(r#"
 #[spirv(fragment)]
-pub fn main(i: Input<i32>) {
+pub fn main(i: &i32) {
     while *i < 10 {
     }
 }
@@ -15,7 +15,7 @@ pub fn main(i: Input<i32>) {
 fn cf_while_while() {
     val(r#"
 #[spirv(fragment)]
-pub fn main(i: Input<i32>) {
+pub fn main(i: &i32) {
     while *i < 20 {
         while *i < 10 {
         }
@@ -28,7 +28,7 @@ pub fn main(i: Input<i32>) {
 fn cf_while_while_break() {
     val(r#"
 #[spirv(fragment)]
-pub fn main(i: Input<i32>) {
+pub fn main(i: &i32) {
     while *i < 20 {
         while *i < 10 {
             break;
@@ -42,7 +42,7 @@ pub fn main(i: Input<i32>) {
 fn cf_while_while_if_break() {
     val(r#"
 #[spirv(fragment)]
-pub fn main(i: Input<i32>) {
+pub fn main(i: &i32) {
     while *i < 20 {
         while *i < 10 {
             if *i > 10 {
@@ -58,7 +58,7 @@ pub fn main(i: Input<i32>) {
 fn cf_while_break() {
     val(r#"
 #[spirv(fragment)]
-pub fn main(i: Input<i32>) {
+pub fn main(i: &i32) {
     while *i < 10 {
         break;
     }
@@ -70,7 +70,7 @@ pub fn main(i: Input<i32>) {
 fn cf_while_if_break() {
     val(r#"
 #[spirv(fragment)]
-pub fn main(i: Input<i32>) {
+pub fn main(i: &i32) {
     while *i < 10 {
         if *i == 0 {
             break;
@@ -84,7 +84,7 @@ pub fn main(i: Input<i32>) {
 fn cf_while_if_break_else_break() {
     val(r#"
 #[spirv(fragment)]
-pub fn main(i: Input<i32>) {
+pub fn main(i: &i32) {
     while *i < 10 {
         if *i == 0 {
             break;
@@ -100,7 +100,7 @@ pub fn main(i: Input<i32>) {
 fn cf_while_if_break_if_break() {
     val(r#"
 #[spirv(fragment)]
-pub fn main(i: Input<i32>) {
+pub fn main(i: &i32) {
     while *i < 10 {
         if *i == 0 {
             break;
@@ -117,7 +117,7 @@ pub fn main(i: Input<i32>) {
 fn cf_while_while_continue() {
     val(r#"
 #[spirv(fragment)]
-pub fn main(i: Input<i32>) {
+pub fn main(i: &i32) {
     while *i < 20 {
         while *i < 10 {
             continue;
@@ -131,7 +131,7 @@ pub fn main(i: Input<i32>) {
 fn cf_while_while_if_continue() {
     val(r#"
 #[spirv(fragment)]
-pub fn main(i: Input<i32>) {
+pub fn main(i: &i32) {
     while *i < 20 {
         while *i < 10 {
             if *i > 5 {
@@ -147,7 +147,7 @@ pub fn main(i: Input<i32>) {
 fn cf_while_continue() {
     val(r#"
 #[spirv(fragment)]
-pub fn main(i: Input<i32>) {
+pub fn main(i: &i32) {
     while *i < 10 {
         continue;
     }
@@ -159,7 +159,7 @@ pub fn main(i: Input<i32>) {
 fn cf_while_if_continue() {
     val(r#"
 #[spirv(fragment)]
-pub fn main(i: Input<i32>) {
+pub fn main(i: &i32) {
     while *i < 10 {
         if *i == 0 {
             continue;
@@ -173,7 +173,7 @@ pub fn main(i: Input<i32>) {
 fn cf_while_if_continue_else_continue() {
     val(r#"
 #[spirv(fragment)]
-pub fn main(i: Input<i32>) {
+pub fn main(i: &i32) {
     while *i < 10 {
         if *i == 0 {
             continue;
@@ -189,7 +189,7 @@ pub fn main(i: Input<i32>) {
 fn cf_while_return() {
     val(r#"
 #[spirv(fragment)]
-pub fn main(i: Input<i32>) {
+pub fn main(i: &i32) {
     while *i < 10 {
         return;
     }
@@ -201,7 +201,7 @@ pub fn main(i: Input<i32>) {
 fn cf_if_return_else() {
     val(r#"
 #[spirv(fragment)]
-pub fn main(i: Input<i32>) {
+pub fn main(i: &i32) {
     if *i < 10 {
         return;
     } else {
@@ -214,7 +214,7 @@ pub fn main(i: Input<i32>) {
 fn cf_if_return_else_return() {
     val(r#"
 #[spirv(fragment)]
-pub fn main(i: Input<i32>) {
+pub fn main(i: &i32) {
     if *i < 10 {
         return;
     } else {
@@ -228,7 +228,7 @@ pub fn main(i: Input<i32>) {
 fn cf_if_while() {
     val(r#"
 #[spirv(fragment)]
-pub fn main(i: Input<i32>) {
+pub fn main(i: &i32) {
     if *i == 0 {
         while *i < 10 {
         }
@@ -241,7 +241,7 @@ pub fn main(i: Input<i32>) {
 fn cf_if() {
     val(r#"
 #[spirv(fragment)]
-pub fn main(i: Input<i32>) {
+pub fn main(i: &i32) {
     if *i > 0 {
 
     }
@@ -252,7 +252,7 @@ pub fn main(i: Input<i32>) {
 fn cf_ifx2() {
     val(r#"
 #[spirv(fragment)]
-pub fn main(i: Input<i32>) {
+pub fn main(i: &i32) {
     if *i > 0 {
 
     }
@@ -267,7 +267,7 @@ pub fn main(i: Input<i32>) {
 fn cf_if_else() {
     val(r#"
 #[spirv(fragment)]
-pub fn main(i: Input<i32>) {
+pub fn main(i: &i32) {
     if *i > 0 {
 
     } else {
@@ -281,7 +281,7 @@ pub fn main(i: Input<i32>) {
 fn cf_if_elseif_else() {
     val(r#"
 #[spirv(fragment)]
-pub fn main(i: Input<i32>) {
+pub fn main(i: &i32) {
     if *i > 0 {
 
     } else if *i < 0 {
@@ -297,7 +297,7 @@ pub fn main(i: Input<i32>) {
 fn cf_if_if() {
     val(r#"
 #[spirv(fragment)]
-pub fn main(i: Input<i32>) {
+pub fn main(i: &i32) {
     if *i > 0 {
         if *i < 10 {
 
@@ -311,7 +311,7 @@ pub fn main(i: Input<i32>) {
 fn cf_defer() {
     val(r#"
 #[spirv(fragment)]
-pub fn main(i: Input<i32>) {
+pub fn main(i: &i32) {
     while *i < 32 {
         let current_position = 0;
         if *i < current_position {
@@ -402,7 +402,7 @@ impl<T: Num + Ord + Copy> Iterator for RangeIter<T> {
 }
 
 #[spirv(fragment)]
-pub fn main(i: Input<i32>) {
+pub fn main(i: &i32) {
     for _ in RangeIter(0..*i) {
     }
 }

@@ -7,14 +7,10 @@
 // HACK(eddyb) can't easily see warnings otherwise from `spirv-builder` builds.
 #![deny(warnings)]
 
-#[cfg(not(target_arch = "spirv"))]
-#[macro_use]
-pub extern crate spirv_std_macros;
-
 use core::f32::consts::PI;
 use glam::{const_vec4, vec2, vec3, Mat2, Vec2, Vec3, Vec4, Vec4Swizzles};
 use shared::*;
-use spirv_std::storage_class::{Input, Output, PushConstant};
+use spirv_std::storage_class::PushConstant;
 
 // Note: This cfg is incorrect on its surface, it really should be "are we compiling with std", but
 // we tie #[no_std] above to the same condition, so it's fine.
@@ -148,9 +144,9 @@ impl Painter {
 
 #[spirv(fragment)]
 pub fn main_fs(
-    #[spirv(frag_coord)] in_frag_coord: Input<Vec4>,
+    #[spirv(frag_coord)] in_frag_coord: &Vec4,
     constants: PushConstant<ShaderConstants>,
-    mut output: Output<Vec4>,
+    output: &mut Vec4,
 ) {
     let frag_coord = vec2(in_frag_coord.x, in_frag_coord.y);
 
@@ -260,8 +256,8 @@ pub fn main_fs(
 
 #[spirv(vertex)]
 pub fn main_vs(
-    #[spirv(vertex_index)] vert_idx: Input<i32>,
-    #[spirv(position)] mut builtin_pos: Output<Vec4>,
+    #[spirv(vertex_index)] vert_idx: &i32,
+    #[spirv(position)] builtin_pos: &mut Vec4,
 ) {
     let vert_idx = *vert_idx;
 

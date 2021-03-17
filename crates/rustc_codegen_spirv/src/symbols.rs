@@ -514,7 +514,7 @@ pub(crate) fn parse_attrs_for_checking<'a>(
             .into_iter()
             .chain(args.into_iter().map(move |ref arg| {
                 let span = arg.span();
-                let parsed_attr = if arg.has_name(sym.image_type) {
+                let parsed_attr = if arg.has_name(sym.image) {
                     SpirvAttribute::Image
                 } else if arg.has_name(sym.descriptor_set) {
                     SpirvAttribute::DescriptorSet(parse_attr_int_value(arg)?)
