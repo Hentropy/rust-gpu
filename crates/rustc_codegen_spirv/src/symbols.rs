@@ -2,8 +2,11 @@ use crate::builder::libm_intrinsics;
 use crate::codegen_cx::CodegenCx;
 use rspirv::spirv::{BuiltIn, ExecutionMode, ExecutionModel, StorageClass};
 use rustc_ast::ast::{AttrKind, Attribute, Lit, LitIntType, LitKind, NestedMetaItem};
+use rustc_data_structures::captures::Captures;
 use rustc_span::symbol::{Ident, Symbol};
+use rustc_span::Span;
 use std::collections::HashMap;
+use std::rc::Rc;
 
 /// Various places in the codebase (mostly attribute parsing) need to compare rustc Symbols to particular keywords.
 /// Symbols are interned, as in, they don't actually store the string itself inside them, but rather an index into a
@@ -28,6 +31,7 @@ pub struct Symbols {
     pub spirv13: Symbol,
     pub spirv14: Symbol,
     pub spirv15: Symbol,
+    pub entry_point_name: Symbol,
     descriptor_set: Symbol,
     binding: Symbol,
     image: Symbol,
@@ -185,7 +189,7 @@ const EXECUTION_MODELS: &[(&str, ExecutionModel)] = {
         ("tessellation_evaluation", TessellationEvaluation),
         ("geometry", Geometry),
         ("fragment", Fragment),
-        ("gl_compute", GLCompute),
+        ("compute", GLCompute),
         ("kernel", Kernel),
         ("task_nv", TaskNV),
         ("mesh_nv", MeshNV),
@@ -205,6 +209,7 @@ enum ExecutionModeExtraDim {
     X,
     Y,
     Z,
+    Tuple,
 }
 
 const EXECUTION_MODES: &[(&str, ExecutionMode, ExecutionModeExtraDim)] = {
@@ -227,9 +232,7 @@ const EXECUTION_MODES: &[(&str, ExecutionMode, ExecutionModeExtraDim)] = {
         ("depth_greater", DepthGreater, None),
         ("depth_less", DepthLess, None),
         ("depth_unchanged", DepthUnchanged, None),
-        ("local_size_x", LocalSize, X),
-        ("local_size_y", LocalSize, Y),
-        ("local_size_z", LocalSize, Z),
+        ("threads", LocalSize, Tuple),
         ("local_size_hint_x", LocalSizeHint, X),
         ("local_size_hint_y", LocalSizeHint, Y),
         ("local_size_hint_z", LocalSizeHint, Z),
@@ -311,7 +314,7 @@ const EXECUTION_MODES: &[(&str, ExecutionMode, ExecutionModeExtraDim)] = {
 };
 
 impl Symbols {
-    pub fn new() -> Self {
+    fn new() -> Self {
         let builtins = BUILTINS
             .iter()
             .map(|&(a, b)| (a, SpirvAttribute::Builtin(b)));
@@ -361,6 +364,7 @@ impl Symbols {
         Self {
             fmt_decimal: Symbol::intern("fmt_decimal"),
 
+            entry_point_name: Symbol::intern("entry_point_name"),
             spirv: Symbol::intern("spirv"),
             spirv_std: Symbol::intern("spirv_std"),
             libm: Symbol::intern("libm"),
@@ -382,6 +386,16 @@ impl Symbols {
             execution_modes,
             libm_intrinsics,
         }
+    }
+
+    /// Obtain an `Rc` handle to the current thread's `Symbols` instance, which
+    /// will be shared between all `Symbols::get()` calls on the same thread.
+    ///
+    /// While this is relatively cheap, prefer caching it in e.g. `CodegenCx`,
+    /// rather than calling `get()` every time a field of `Symbols` is needed.
+    pub fn get() -> Rc<Self> {
+        thread_local!(static SYMBOLS: Rc<Symbols> = Rc::new(Symbols::new()));
+        SYMBOLS.with(Rc::clone)
     }
 }
 
@@ -411,6 +425,7 @@ impl AsRef<[u32]> for ExecutionModeExtra {
 pub struct Entry {
     pub execution_model: ExecutionModel,
     pub execution_modes: Vec<(ExecutionMode, ExecutionModeExtra)>,
+    pub name: Option<Symbol>,
 }
 
 impl From<ExecutionModel> for Entry {
@@ -418,10 +433,12 @@ impl From<ExecutionModel> for Entry {
         Self {
             execution_model,
             execution_modes: Vec::new(),
+            name: None,
         }
     }
 }
 
+// FIXME(eddyb) maybe move this to `attr`?
 #[derive(Debug, Clone)]
 pub enum SpirvAttribute {
     Builtin(BuiltIn),
@@ -439,103 +456,146 @@ pub enum SpirvAttribute {
     IndexDescriptorArray,
 }
 
-// Note that we could mark the attr as used via cx.tcx.sess.mark_attr_used(attr), but unused
-// reporting already happens even before we get here :(
-/// Returns empty if this attribute is not a spirv attribute, or if it's malformed (and an error is
-/// reported).
-pub fn parse_attrs(
-    cx: &CodegenCx<'_>,
-    attrs: &[Attribute],
-) -> impl Iterator<Item = SpirvAttribute> {
-    let result =
-        attrs.iter().flat_map(|attr| {
-            let is_spirv = match attr.kind {
-                AttrKind::Normal(ref item, _) => {
-                    // TODO: We ignore the rest of the path. Is this right?
-                    let last = item.path.segments.last();
-                    last.map_or(false, |seg| seg.ident.name == cx.sym.spirv)
-                }
-                AttrKind::DocComment(..) => false,
-            };
-            let args = if !is_spirv {
-                // Use an empty vec here to return empty
-                Vec::new()
-            } else if let Some(args) = attr.meta_item_list() {
-                args
-            } else {
-                cx.tcx.sess.span_err(
+// FIXME(eddyb) maybe move this to `attr`?
+/// Returns only the spirv attributes that could successfully parsed.
+/// For any malformed ones, an error is reported prior to codegen, by a check pass.
+pub fn parse_attrs<'a, 'tcx>(
+    cx: &'a CodegenCx<'tcx>,
+    attrs: &'tcx [Attribute],
+) -> impl Iterator<Item = SpirvAttribute> + Captures<'tcx> + 'a {
+    parse_attrs_for_checking(&cx.sym, attrs)
+        .filter_map(move |(_, parse_attr_result)| {
+            // NOTE(eddyb) `delay_span_bug` ensures that if attribute checking fails
+            // to see an attribute error, it will cause an ICE instead.
+            parse_attr_result
+                .map_err(|(span, msg)| cx.tcx.sess.delay_span_bug(span, &msg))
+                .ok()
+        })
+        .map(|(_span, parsed_attr)| parsed_attr)
+}
+
+// FIXME(eddyb) find something nicer for the error type.
+type ParseAttrError = (Span, String);
+
+// FIXME(eddyb) maybe move this to `attr`?
+pub(crate) fn parse_attrs_for_checking<'a>(
+    sym: &'a Symbols,
+    attrs: &'a [Attribute],
+) -> impl Iterator<
+    Item = (
+        &'a Attribute,
+        Result<(Span, SpirvAttribute), ParseAttrError>,
+    ),
+> + 'a {
+    attrs.iter().flat_map(move |attr| {
+        let is_spirv = match attr.kind {
+            AttrKind::Normal(ref item, _) => {
+                // TODO: We ignore the rest of the path. Is this right?
+                let last = item.path.segments.last();
+                last.map_or(false, |seg| seg.ident.name == sym.spirv)
+            }
+            AttrKind::DocComment(..) => false,
+        };
+        let (whole_attr_error, args) = if !is_spirv {
+            // Use an empty vec here to return empty
+            (None, Vec::new())
+        } else if let Some(args) = attr.meta_item_list() {
+            (None, args)
+        } else {
+            (
+                Some(Err((
                     attr.span,
-                    "#[spirv(..)] attribute must have at least one argument",
-                );
-                Vec::new()
-            };
-            args.into_iter().filter_map(move |ref arg| {
-                if arg.has_name(cx.sym.image) {
-                    Some(SpirvAttribute::Image)
-                } else if arg.has_name(cx.sym.descriptor_set) {
-                    match parse_attr_int_value(cx, arg) {
-                        Some(x) => Some(SpirvAttribute::DescriptorSet(x)),
-                        None => None,
-                    }
-                } else if arg.has_name(cx.sym.binding) {
-                    match parse_attr_int_value(cx, arg) {
-                        Some(x) => Some(SpirvAttribute::Binding(x)),
-                        None => None,
-                    }
+                    "#[spirv(..)] attribute must have at least one argument".to_string(),
+                ))),
+                Vec::new(),
+            )
+        };
+        whole_attr_error
+            .into_iter()
+            .chain(args.into_iter().map(move |ref arg| {
+                let span = arg.span();
+                let parsed_attr = if arg.has_name(sym.image_type) {
+                    SpirvAttribute::Image
+                } else if arg.has_name(sym.descriptor_set) {
+                    SpirvAttribute::DescriptorSet(parse_attr_int_value(arg)?)
+                } else if arg.has_name(sym.binding) {
+                    SpirvAttribute::Binding(parse_attr_int_value(arg)?)
                 } else {
                     let name = match arg.ident() {
                         Some(i) => i,
                         None => {
-                            cx.tcx.sess.span_err(
-                                arg.span(),
-                                "#[spirv(..)] attribute argument must be single identifier",
-                            );
-                            return None;
+                            return Err((
+                                span,
+                                "#[spirv(..)] attribute argument must be single identifier"
+                                    .to_string(),
+                            ));
                         }
                     };
-                    cx.sym
-                        .attributes
+                    sym.attributes
                         .get(&name.name)
-                        .map(|a| match a {
-                            SpirvAttribute::Entry(entry) => SpirvAttribute::Entry(
-                                parse_entry_attrs(cx, arg, &name, entry.execution_model),
-                            ),
-                            _ => a.clone(),
+                        .map(|a| {
+                            Ok(match a {
+                                SpirvAttribute::Entry(entry) => SpirvAttribute::Entry(
+                                    parse_entry_attrs(sym, arg, &name, entry.execution_model)?,
+                                ),
+                                _ => a.clone(),
+                            })
                         })
-                        .or_else(|| {
-                            cx.tcx
-                                .sess
-                                .span_err(name.span, "unknown argument to spirv attribute");
-                            None
-                        })
-                }
-            })
-        });
-    // lifetimes are hard :(
-    result.collect::<Vec<_>>().into_iter()
+                        .unwrap_or_else(|| {
+                            Err((name.span, "unknown argument to spirv attribute".to_string()))
+                        })?
+                };
+                Ok((span, parsed_attr))
+            }))
+            .map(move |parse_attr_result| (attr, parse_attr_result))
+    })
 }
 
-fn parse_attr_int_value(cx: &CodegenCx<'_>, arg: &NestedMetaItem) -> Option<u32> {
+fn parse_attr_int_value(arg: &NestedMetaItem) -> Result<u32, ParseAttrError> {
     let arg = match arg.meta_item() {
         Some(arg) => arg,
-        None => {
-            cx.tcx
-                .sess
-                .span_err(arg.span(), "attribute must have value");
-            return None;
-        }
+        None => return Err((arg.span(), "attribute must have value".to_string())),
     };
     match arg.name_value_literal() {
         Some(&Lit {
             kind: LitKind::Int(x, LitIntType::Unsuffixed),
             ..
-        }) if x <= u32::MAX as u128 => Some(x as u32),
-        _ => {
-            cx.tcx
-                .sess
-                .span_err(arg.span, "attribute value must be integer");
-            None
+        }) if x <= u32::MAX as u128 => Ok(x as u32),
+        _ => Err((arg.span, "attribute value must be integer".to_string())),
+    }
+}
+
+fn parse_local_size_attr(arg: &NestedMetaItem) -> Result<[u32; 3], ParseAttrError> {
+    let arg = match arg.meta_item() {
+        Some(arg) => arg,
+        None => return Err((arg.span(), "attribute must have value".to_string())),
+    };
+    match arg.meta_item_list() {
+        Some(tuple) if !tuple.is_empty() && tuple.len() < 4 => {
+            let mut local_size = [1; 3];
+            for (idx, lit) in tuple.iter().enumerate() {
+                match lit.literal() {
+                    Some(&Lit {
+                        kind: LitKind::Int(x, LitIntType::Unsuffixed),
+                        ..
+                    }) if x <= u32::MAX as u128 => local_size[idx] = x as u32,
+                    _ => return Err((lit.span(), "must be a u32 literal".to_string())),
+                }
+            }
+            Ok(local_size)
         }
+        Some(tuple) if tuple.is_empty() => Err((
+            arg.span,
+            "#[spirv(compute(threads(x, y, z)))] must have the x dimension specified, trailing ones may be elided".to_string(),
+        )),
+        Some(tuple) if tuple.len() > 3 => Err((
+            arg.span,
+            "#[spirv(compute(threads(x, y, z)))] is three dimensional".to_string(),
+        )),
+        _ => Err((
+            arg.span,
+            "#[spirv(compute(threads(x, y, z)))] must have 1 to 3 parameters, trailing ones may be elided".to_string(),
+        )),
     }
 }
 
@@ -544,11 +604,11 @@ fn parse_attr_int_value(cx: &CodegenCx<'_>, arg: &NestedMetaItem) -> Option<u32>
 // others are specified with x, y, or z components
 // ie #[spirv(fragment(origin_lower_left))] or #[spirv(gl_compute(local_size_x=64, local_size_y=8))]
 fn parse_entry_attrs(
-    cx: &CodegenCx<'_>,
+    sym: &Symbols,
     arg: &NestedMetaItem,
     name: &Ident,
     execution_model: ExecutionModel,
-) -> Entry {
+) -> Result<Entry, ParseAttrError> {
     use ExecutionMode::*;
     use ExecutionModel::*;
     let mut entry = Entry::from(execution_model);
@@ -558,37 +618,29 @@ fn parse_entry_attrs(
     // Reserved
     //let mut max_workgroup_size_intel: Option<[u32; 3]> = None;
     if let Some(attrs) = arg.meta_item_list() {
-        attrs.iter().for_each(|attr| {
+        for attr in attrs {
             if let Some(attr_name) = attr.ident() {
-                if let Some((execution_mode, extra_dim)) =
-                    cx.sym.execution_modes.get(&attr_name.name)
+                if let Some((execution_mode, extra_dim)) = sym.execution_modes.get(&attr_name.name)
                 {
                     use ExecutionModeExtraDim::*;
                     let val = match extra_dim {
-                        None => Option::None,
-                        _ => parse_attr_int_value(cx, attr),
+                        None | Tuple => Option::None,
+                        _ => Some(parse_attr_int_value(attr)?),
                     };
                     match execution_mode {
                         OriginUpperLeft | OriginLowerLeft => {
                             origin_mode.replace(*execution_mode);
                         }
                         LocalSize => {
-                            let val = val.unwrap();
                             if local_size.is_none() {
-                                local_size.replace([1, 1, 1]);
-                            }
-                            let local_size = local_size.as_mut().unwrap();
-                            match extra_dim {
-                                X => {
-                                    local_size[0] = val;
-                                }
-                                Y => {
-                                    local_size[1] = val;
-                                }
-                                Z => {
-                                    local_size[2] = val;
-                                }
-                                _ => unreachable!(),
+                                local_size.replace(parse_local_size_attr(attr)?);
+                            } else {
+                                return Err((
+                                    attr_name.span,
+                                    String::from(
+                                        "`#[spirv(compute(threads))]` may only be specified once",
+                                    ),
+                                ));
                             }
                         }
                         LocalSizeHint => {
@@ -643,26 +695,42 @@ fn parse_entry_attrs(
                             }
                         }
                     }
+                } else if attr_name.name == sym.entry_point_name {
+                    match attr.value_str() {
+                        Some(sym) => {
+                            entry.name = Some(sym);
+                        }
+                        None => {
+                            return Err((
+                                attr_name.span,
+                                format!(
+                                    "#[spirv({}(..))] unknown attribute argument {}",
+                                    name.name.to_ident_string(),
+                                    attr_name.name.to_ident_string()
+                                ),
+                            ))
+                        }
+                    }
                 } else {
-                    cx.tcx.sess.span_err(
+                    return Err((
                         attr_name.span,
-                        &format!(
+                        format!(
                             "#[spirv({}(..))] unknown attribute argument {}",
                             name.name.to_ident_string(),
                             attr_name.name.to_ident_string()
                         ),
-                    );
+                    ));
                 }
             } else {
-                cx.tcx.sess.span_err(
+                return Err((
                     arg.span(),
-                    &format!(
+                    format!(
                         "#[spirv({}(..))] attribute argument must be single identifier",
                         name.name.to_ident_string()
                     ),
-                );
+                ));
             }
-        });
+        }
     }
     match entry.execution_model {
         Fragment => {
@@ -672,10 +740,18 @@ fn parse_entry_attrs(
                 .push((origin_mode, ExecutionModeExtra::new([])));
         }
         GLCompute => {
-            let local_size = local_size.unwrap_or([1, 1, 1]);
-            entry
-                .execution_modes
-                .push((LocalSize, ExecutionModeExtra::new(local_size)));
+            if let Some(local_size) = local_size {
+                entry
+                    .execution_modes
+                    .push((LocalSize, ExecutionModeExtra::new(local_size)));
+            } else {
+                return Err((
+                    arg.span(),
+                    String::from(
+                        "The `threads` argument must be specified when using `#[spirv(compute)]`",
+                    ),
+                ));
+            }
         }
         Kernel => {
             if let Some(local_size) = local_size {
@@ -696,5 +772,5 @@ fn parse_entry_attrs(
         //TODO: Cover more defaults
         _ => {}
     }
-    entry
+    Ok(entry)
 }

@@ -124,7 +124,6 @@ mod sealed {
 macro_rules! storage_class {
     ($(#[$($meta:meta)+])* storage_class $name:ident ; $($tt:tt)*) => {
         $(#[$($meta)+])*
-        #[allow(unused_attributes)]
         pub struct $name<'value, T: ?Sized> {
             reference: &'value mut T,
         }

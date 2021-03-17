@@ -22,11 +22,30 @@ impl<'a> Drop for SetEnvVar<'a> {
 #[test]
 fn hello_world() {
     val(r#"
-#[allow(unused_attributes)]
 #[spirv(fragment)]
 pub fn main() {
 }
 "#);
+}
+
+#[test]
+fn custom_entry_point() {
+    dis_globals(
+        r#"
+#[spirv(fragment(entry_point_name="hello_world"))]
+pub fn main() { }
+"#,
+        r#"OpCapability Shader
+OpCapability VulkanMemoryModel
+OpCapability VariablePointers
+OpExtension "SPV_KHR_vulkan_memory_model"
+OpMemoryModel Logical Vulkan
+OpEntryPoint Fragment %1 "hello_world"
+OpExecutionMode %1 OriginUpperLeft
+OpName %2 "test_project::main"
+%3 = OpTypeVoid
+%4 = OpTypeFunction %3"#,
+    );
 }
 
 #[test]
@@ -35,7 +54,6 @@ pub fn main() {
 fn no_dce() {
     let _var = SetEnvVar::new(&"NO_DCE", "1");
     val(r#"
-#[allow(unused_attributes)]
 #[spirv(fragment)]
 pub fn no_dce() {
 }
@@ -49,7 +67,6 @@ fn add_two_ints() {
 fn add_two_ints(x: u32, y: u32) -> u32 {
     x + y
 }
-#[allow(unused_attributes)]
 #[spirv(fragment)]
 pub fn main() {
     add_two_ints(2, 3);
@@ -80,7 +97,6 @@ fn asm() {
         );
     }
 }
-#[allow(unused_attributes)]
 #[spirv(fragment)]
 pub fn main() {
     asm();
@@ -112,7 +128,6 @@ fn add_two_ints(x: u32, y: u32) -> u32 {
     }
     result
 }
-#[allow(unused_attributes)]
 #[spirv(fragment)]
 pub fn main() {
     add_two_ints(2, 3);
@@ -162,7 +177,6 @@ fn asm_op_decorate() {
                     );
             }
         }
-        #[allow(unused_attributes)]
         #[spirv(fragment)]
         pub fn main() {
             add_decorate();
@@ -208,7 +222,6 @@ fn asm() {
         );
     }
 }
-#[allow(unused_attributes)]
 #[spirv(fragment)]
 pub fn main() {
     asm();
@@ -222,7 +235,6 @@ fn logical_and() {
 fn f(x: bool, y: bool) -> bool {
     x && y
 }
-#[allow(unused_attributes)]
 #[spirv(fragment)]
 pub fn main() {
     f(false, true);
@@ -232,7 +244,6 @@ pub fn main() {
 #[test]
 fn panic() {
     val(r#"
-#[allow(unused_attributes)]
 #[spirv(fragment)]
 pub fn main() {
     panic!("aaa");
@@ -247,7 +258,6 @@ fn int_div(x: usize) -> usize {
     1 / x
 }
 
-#[allow(unused_attributes)]
 #[spirv(fragment)]
 pub fn main() {
     int_div(0);
@@ -262,7 +272,6 @@ fn array_bounds_check(x: [u32; 4], i: usize) -> u32 {
     x[i]
 }
 
-#[allow(unused_attributes)]
 #[spirv(fragment)]
 pub fn main() {
     array_bounds_check([0, 1, 2, 3], 5);
@@ -282,7 +291,6 @@ pub struct ShaderConstants {
     pub time: f32,
 }
 
-#[allow(unused_attributes)]
 #[spirv(fragment)]
 pub fn main(constants: PushConstant<ShaderConstants>) {
     let _constants = *constants;
@@ -298,7 +306,6 @@ fn push_constant_vulkan() {
     val_vulkan(
         r#"
 #[derive(Copy, Clone)]
-#[allow(unused_attributes)]
 #[spirv(block)]
 pub struct ShaderConstants {
     pub width: u32,
@@ -306,7 +313,6 @@ pub struct ShaderConstants {
     pub time: f32,
 }
 
-#[allow(unused_attributes)]
 #[spirv(fragment)]
 pub fn main(constants: PushConstant<ShaderConstants>) {
     let _constants = *constants;
@@ -318,7 +324,6 @@ pub fn main(constants: PushConstant<ShaderConstants>) {
 #[test]
 fn infinite_loop() {
     val(r#"
-#[allow(unused_attributes)]
 #[spirv(fragment)]
 pub fn main() {
     loop {}
@@ -330,7 +335,6 @@ fn unroll_loops() {
     dis_fn(
         // FIXME(eddyb) use `for _ in 0..10` here when that works.
         r#"
-#[allow(unused_attributes)]
 #[spirv(unroll_loops)]
 fn java_hash_ten_times(mut x: u32, y: u32) -> u32 {
     let mut i = 0;
@@ -340,7 +344,6 @@ fn java_hash_ten_times(mut x: u32, y: u32) -> u32 {
     }
     x
 }
-#[allow(unused_attributes)]
 #[spirv(fragment)]
 pub fn main() {
     java_hash_ten_times(7, 42);
@@ -390,7 +393,6 @@ OpFunctionEnd"#,
 #[test]
 fn signum() {
     val(r#"
-#[allow(unused_attributes)]
 #[spirv(fragment)]
 pub fn main(i: Input<f32>, mut o: Output<f32>) {
     *o = i.signum();
@@ -406,7 +408,6 @@ fn allocate_const_scalar_pointer() {
 use core::ptr::Unique;
 const POINTER: Unique<[u8;4]> = Unique::<[u8; 4]>::dangling();
 
-#[allow(unused_attributes)]
 #[spirv(fragment)]
 pub fn main() {
     let _pointer = POINTER;
@@ -422,7 +423,6 @@ const VEC_LIKE: (Unique<usize>, usize, usize) = (Unique::<usize>::dangling(), 0,
 pub fn assign_vec_like() {
     let _vec_like = VEC_LIKE;
 }
-#[allow(unused_attributes)]
 #[spirv(fragment)]
 pub fn main() {}"#);
 }
@@ -433,7 +433,6 @@ fn allocate_null_pointer() {
 use core::ptr::null;
 const NULL_PTR: *const i32 = null();
 
-#[allow(unused_attributes)]
 #[spirv(fragment)]
 pub fn main() {
     let _null_ptr = NULL_PTR;
@@ -452,7 +451,6 @@ pub fn create_uninit_and_write() {
     let _maybei32 = unsafe { maybei32.assume_init() };
 }
 
-#[allow(unused_attributes)]
 #[spirv(fragment)]
 pub fn main() {}"#);
 }
@@ -460,12 +458,14 @@ pub fn main() {}"#);
 #[test]
 fn vector_extract_dynamic() {
     val(r#"
-#[allow(unused_attributes)]
 #[spirv(fragment)]
 pub fn main() {
     let vector = glam::Vec2::new(1.0, 2.0);
     let element = unsafe { spirv_std::arch::vector_extract_dynamic(vector, 1) };
     assert!(2.0 == element);
+    let uvector = glam::UVec2::new(1, 2);
+    let element: u32 = unsafe { spirv_std::arch::vector_extract_dynamic(uvector, 1) };
+    assert!(2 == element);
 }
 "#);
 }
@@ -473,13 +473,16 @@ pub fn main() {
 #[test]
 fn vector_insert_dynamic() {
     val(r#"
-#[allow(unused_attributes)]
 #[spirv(fragment)]
 pub fn main() {
     let vector = glam::Vec2::new(1.0, 2.0);
     let expected = glam::Vec2::new(1.0, 3.0);
     let new_vector = unsafe { spirv_std::arch::vector_insert_dynamic(vector, 1, 3.0) };
     assert!(new_vector == expected);
+    let uvector = glam::UVec2::new(1, 2);
+    let uexpected = glam::UVec2::new(1, 3);
+    let new_vector = unsafe { spirv_std::arch::vector_insert_dynamic(uvector, 1, 3) };
+    assert!(new_vector == uexpected);
 }
 "#);
 }
@@ -487,7 +490,6 @@ pub fn main() {
 #[test]
 fn mat3_vec3_multiply() {
     val(r#"
-#[allow(unused_attributes)]
 #[spirv(fragment)]
 pub fn main(input: Input<glam::Mat3>, mut output: Output<glam::Vec3>) {
     let input = *input;
@@ -548,10 +550,9 @@ fn complex_image_sample_inst() {
             result
         }
     }
-    #[allow(unused_attributes)]
     #[spirv(fragment)]
     pub fn main() {
-        sample_proj_lod(glam::Vec4::zero(), glam::Vec2::zero(), glam::Vec2::zero(), 0, 0);
+        sample_proj_lod(glam::Vec4::ZERO, glam::Vec2::ZERO, glam::Vec2::ZERO, 0, 0);
     }"#,
         "sample_proj_lod",
         "%1 = OpFunction %2 None %3
@@ -572,10 +573,9 @@ OpFunctionEnd",
 #[test]
 fn image_read() {
     val(r#"
-#[allow(unused_attributes)]
 #[spirv(fragment)]
 pub fn main(image: UniformConstant<StorageImage2d>, mut output: Output<glam::Vec2>) {
-    let coords = image.read(glam::IVec2::new(0, 1));
+    let coords =  image.read(glam::IVec2::new(0, 1));
     *output = coords;
 }
 "#);
@@ -584,11 +584,149 @@ pub fn main(image: UniformConstant<StorageImage2d>, mut output: Output<glam::Vec
 #[test]
 fn image_write() {
     val(r#"
-#[allow(unused_attributes)]
 #[spirv(fragment)]
 pub fn main(input: Input<glam::Vec2>, image: UniformConstant<StorageImage2d>) {
     let texels = *input;
-    image.write(glam::UVec2::new(0, 1), texels);
+    unsafe {
+        image.write(glam::UVec2::new(0, 1), texels);
+    }
 }
 "#);
+}
+
+#[test]
+fn image_fetch() {
+    val(r#"
+#[spirv(fragment)]
+pub fn main(image: UniformConstant<Image2d>, mut output: Output<glam::Vec4>) {
+    let texel = image.fetch(glam::IVec2::new(0, 1));
+    *output = texel;
+}
+"#);
+}
+
+/// Helper to generate all of the `ptr_*` tests below, which test that the various
+/// ways to use raw pointer `read`/`write`/`copy`, to copy a single value, work,
+/// and that the resulting SPIR-V uses either a pair of `OpLoad` and `OpStore`,
+/// and/or the `OpCopyMemory` instruction, but *not* `OpCopyMemorySized`.
+macro_rules! test_copy_via_raw_ptr {
+    ($copy_expr:literal => $spirv:literal) => {
+        dis_fn(
+            concat!(
+                r#"
+        fn copy_via_raw_ptr(src: &f32, dst: &mut f32) {
+            unsafe {
+                "#,
+                $copy_expr,
+                r#"
+            }
+        }
+        #[spirv(fragment)]
+        pub fn main(i: Input<f32>, mut o: Output<f32>) {
+            copy_via_raw_ptr(&i, &mut o);
+            // FIXME(eddyb) above call results in inlining `copy_via_raw_ptr`,
+            // due to the to `Input`/`Output` storage classes, so to get the
+            // disassembled function we also need `Function`-local pointers:
+            let (src, mut dst) = (0.0, 0.0);
+            copy_via_raw_ptr(&src, &mut dst);
+        }
+"#
+            ),
+            "copy_via_raw_ptr",
+            concat!(
+                r#"%1 = OpFunction %2 None %3
+                %4 = OpFunctionParameter %5
+                %6 = OpFunctionParameter %5
+                %7 = OpLabel"#,
+                $spirv,
+                r#"OpReturn
+                OpFunctionEnd"#
+            ),
+        );
+    };
+}
+
+#[test]
+fn ptr_read() {
+    test_copy_via_raw_ptr!(
+        "*dst = core::ptr::read(src)"=> r#"
+            %8 = OpVariable %5 Function
+            OpStore %8 %9
+            OpCopyMemory %8 %4
+            %10 = OpLoad %11 %8
+            OpStore %6 %10
+        "#
+    );
+}
+
+#[test]
+fn ptr_read_method() {
+    test_copy_via_raw_ptr!(
+        "*dst = (src as *const f32).read()" => r#"
+            %8 = OpVariable %5 Function
+            OpStore %8 %9
+            OpCopyMemory %8 %4
+            %10 = OpLoad %11 %8
+            OpStore %6 %10
+        "#
+    );
+}
+
+#[test]
+fn ptr_write() {
+    test_copy_via_raw_ptr!(
+        "core::ptr::write(dst, *src)" => r#"
+            %8 = OpVariable %5 Function
+            %9 = OpLoad %10 %4
+            OpStore %8 %9
+            OpCopyMemory %6 %8
+        "#
+    );
+}
+
+#[test]
+fn ptr_write_method() {
+    test_copy_via_raw_ptr!(
+        "(dst as *mut f32).write(*src)" => r#"
+            %8 = OpVariable %5 Function
+            %9 = OpLoad %10 %4
+            OpStore %8 %9
+            OpCopyMemory %6 %8
+        "#
+    );
+}
+
+#[test]
+fn ptr_copy() {
+    test_copy_via_raw_ptr!(
+        "core::ptr::copy(src, dst, 1)" => r#"
+            OpCopyMemory %6 %4
+        "#
+    );
+}
+
+#[test]
+// FIXME(eddyb) doesn't work because `<*const T>::copy_to` is a method that wraps
+// the actual `core::ptr::copy` intrinsic - this requires either MIR inlining, or
+// making the methods themselves intrinsic (via attributes instead of pseudo-ABI).
+#[ignore]
+fn ptr_copy_to_method() {
+    test_copy_via_raw_ptr!(
+        "(src as *const f32).copy_to(dst, 1)" => r#"
+            OpCopyMemory %6 %4
+        "#
+    );
+}
+
+#[test]
+// FIXME(eddyb) doesn't work because `<*mut T>::copy_from` is a method that wraps
+// the actual `core::ptr::copy` intrinsic - this requires either MIR inlining, or
+// making the methods themselves intrinsic (via attributes instead of pseudo-ABI).
+#[ignore]
+fn ptr_copy_from_method() {
+    test_copy_via_raw_ptr!(
+        "(dst as *mut f32).copy_from(src, 1)" => r#"
+            OpCopyMemory %6 %4
+        "#
+    );
 }

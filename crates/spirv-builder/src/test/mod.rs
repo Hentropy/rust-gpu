@@ -47,7 +47,11 @@ overflow-checks = false
 debug-assertions = false
 
 [dependencies]
-spirv-std = { path = "../../crates/spirv-std" }
+spirv-std = { path = "../../crates/spirv-std", features=["const-generics"] }
+glam = { git = "https://github.com/EmbarkStudios/glam-rs.git", branch="spirv-std-impl", default-features=false, features = ["libm", "scalar-math"] }
+
+[patch.crates-io.spirv-std]
+path="../../crates/spirv-std"
 
 [workspace]
 "#;
@@ -136,7 +140,13 @@ fn dis_fn(src: &str, func: &str, expect: &str) {
             inst.class.opcode == rspirv::spirv::Op::Name
                 && inst.operands[1].unwrap_literal_string() == abs_func_path
         })
-        .expect("No function with that name found")
+        .unwrap_or_else(|| {
+            panic!(
+                "no function with the name `{}` found in:\n{}\n",
+                abs_func_path,
+                module.disassemble()
+            )
+        })
         .operands[0]
         .unwrap_id_ref();
     let mut func = module

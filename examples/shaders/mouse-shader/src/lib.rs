@@ -12,14 +12,17 @@
 pub extern crate spirv_std_macros;
 
 use core::f32::consts::PI;
+use glam::{const_vec4, vec2, vec3, Mat2, Vec2, Vec3, Vec4, Vec4Swizzles};
 use shared::*;
-use spirv_std::glam::{const_vec4, vec2, vec3, Mat2, Vec2, Vec3, Vec4, Vec4Swizzles};
 use spirv_std::storage_class::{Input, Output, PushConstant};
 
 // Note: This cfg is incorrect on its surface, it really should be "are we compiling with std", but
 // we tie #[no_std] above to the same condition, so it's fine.
 #[cfg(target_arch = "spirv")]
 use spirv_std::num_traits::Float;
+
+#[cfg(not(target_arch = "spirv"))]
+use spirv_std::macros::spirv;
 
 trait Shape: Copy {
     /// Distances indicate where the point is in relation to the shape:
@@ -139,14 +142,10 @@ impl Painter {
     /// Fill and add a constrasting border (0.5px thick stroke of inverted color).
     fn fill_with_contrast_border(&mut self, shape: impl Shape, color: Vec4) {
         self.fill(shape, color);
-        self.fill(
-            shape.stroke(0.5),
-            (Vec3::one() - color.xyz()).extend(color.w),
-        );
+        self.fill(shape.stroke(0.5), (Vec3::ONE - color.xyz()).extend(color.w));
     }
 }
 
-#[allow(unused_attributes)]
 #[spirv(fragment)]
 pub fn main_fs(
     #[spirv(frag_coord)] in_frag_coord: Input<Vec4>,
@@ -259,7 +258,6 @@ pub fn main_fs(
     *output = painter.color.extend(1.0);
 }
 
-#[allow(unused_attributes)]
 #[spirv(vertex)]
 pub fn main_vs(
     #[spirv(vertex_index)] vert_idx: Input<i32>,
@@ -270,7 +268,7 @@ pub fn main_vs(
     // Create a "full screen triangle" by mapping the vertex index.
     // ported from https://www.saschawillems.de/blog/2016/08/13/vulkan-tutorial-on-rendering-a-fullscreen-quad-without-buffers/
     let uv = vec2(((vert_idx << 1) & 2) as f32, (vert_idx & 2) as f32);
-    let pos = 2.0 * uv - Vec2::one();
+    let pos = 2.0 * uv - Vec2::ONE;
 
     *builtin_pos = pos.extend(0.0).extend(1.0);
 }

@@ -11,7 +11,7 @@ use crate::decorations::{
 use crate::spirv_type::{SpirvType, SpirvTypePrinter, TypeCache};
 use crate::symbols::Symbols;
 use rspirv::dr::{Module, Operand};
-use rspirv::spirv::{Decoration, LinkageType, MemoryModel, StorageClass, Word};
+use rspirv::spirv::{AddressingModel, Decoration, LinkageType, MemoryModel, StorageClass, Word};
 use rustc_codegen_ssa::mir::debuginfo::{FunctionDebugContext, VariableKind};
 use rustc_codegen_ssa::traits::{
     AsmMethods, BackendTypes, CoverageInfoMethods, DebugInfoMethods, MiscMethods,
@@ -32,6 +32,7 @@ use rustc_target::spec::{HasTargetSpec, Target};
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::iter::once;
+use std::rc::Rc;
 
 pub struct CodegenCx<'tcx> {
     pub tcx: TyCtxt<'tcx>,
@@ -56,7 +57,7 @@ pub struct CodegenCx<'tcx> {
     unroll_loops_decorations: RefCell<HashMap<Word, UnrollLoopsDecoration>>,
     pub kernel_mode: bool,
     /// Cache of all the builtin symbols we need
-    pub sym: Box<Symbols>,
+    pub sym: Rc<Symbols>,
     pub instruction_table: InstructionTable,
     pub libm_intrinsics: RefCell<HashMap<Word, super::builder::libm_intrinsics::LibmIntrinsic>>,
 
@@ -74,7 +75,7 @@ pub struct CodegenCx<'tcx> {
 
 impl<'tcx> CodegenCx<'tcx> {
     pub fn new(tcx: TyCtxt<'tcx>, codegen_unit: &'tcx CodegenUnit<'tcx>) -> Self {
-        let sym = Box::new(Symbols::new());
+        let sym = Symbols::get();
         let mut spirv_version = None;
         let mut memory_model = None;
         let mut kernel_mode = false;
@@ -189,6 +190,17 @@ impl<'tcx> CodegenCx<'tcx> {
             || self.tcx.crate_name(LOCAL_CRATE) == self.sym.spirv_std
             || self.tcx.crate_name(LOCAL_CRATE) == self.sym.libm
             || self.tcx.crate_name(LOCAL_CRATE) == self.sym.num_traits
+    }
+
+    // FIXME(eddyb) should this just be looking at `kernel_mode`?
+    pub fn logical_addressing_model(&self) -> bool {
+        self.emit_global()
+            .module_ref()
+            .memory_model
+            .as_ref()
+            .map_or(false, |inst| {
+                inst.operands[0].unwrap_addressing_model() == AddressingModel::Logical
+            })
     }
 
     pub fn finalize_module(self) -> Module {
