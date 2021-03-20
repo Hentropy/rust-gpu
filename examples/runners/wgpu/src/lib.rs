@@ -56,7 +56,26 @@ pub enum RustGPUShader {
     Mouse,
 }
 
-fn shader_module(shader: RustGPUShader) -> wgpu::ShaderModuleDescriptor<'static> {
+#[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
+fn compile_shader(shader: RustGPUShader) -> Vec<u8> {
+    let path_to_crate = match shader {
+        RustGPUShader::Simplest => "examples/shaders/simplest-shader",
+        RustGPUShader::Sky => "examples/shaders/sky-shader",
+        RustGPUShader::Compute => "examples/shaders/compute-shader",
+        RustGPUShader::Mouse => "examples/shaders/mouse-shader",
+    };
+
+    spirv_builder::SpirvBuilder::new(path_to_crate)
+        .spirv_version(1, 0)
+        .print_metadata(false)
+        .build()
+        .map(std::fs::read)
+        .unwrap()
+        .unwrap()
+}
+
+#[cfg(any(target_os = "android", target_arch = "wasm32"))]
+fn shader_module(shader: RustGPUShader) -> wgpu::ShaderModuleSource<'static> {
     match shader {
         RustGPUShader::Simplest => wgpu::include_spirv!(env!("simplest_shader.spv")),
         RustGPUShader::Sky => wgpu::include_spirv!(env!("sky_shader.spv")),
@@ -69,7 +88,7 @@ fn is_compute_shader(shader: RustGPUShader) -> bool {
     shader == RustGPUShader::Compute
 }
 
-#[derive(Clap)]
+#[derive(Clap, Copy, Clone)]
 pub struct Options {
     #[clap(short, long, default_value = "Sky")]
     shader: RustGPUShader,
@@ -80,8 +99,8 @@ pub fn main() {
     let options: Options = Options::parse();
 
     if is_compute_shader(options.shader) {
-        compute::start(&options)
+        compute::start(options)
     } else {
-        graphics::start(&options);
+        graphics::start(options);
     }
 }

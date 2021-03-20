@@ -1,4 +1,4 @@
-use super::{shader_module, Options};
+use super::Options;
 use shared::ShaderConstants;
 use winit::{
     event::{ElementState, Event, KeyboardInput, MouseButton, VirtualKeyCode, WindowEvent},
@@ -6,8 +6,8 @@ use winit::{
     window::Window,
 };
 
-unsafe fn any_as_u8_slice<T: Sized>(p: &T) -> &[u8] {
-    ::std::slice::from_raw_parts((p as *const T) as *const u8, ::std::mem::size_of::<T>())
+unsafe fn any_as_u32_slice<T: Sized>(p: &T) -> &[u32] {
+    ::std::slice::from_raw_parts(p as *const _ as *const u32, ::std::mem::size_of::<T>() / 4)
 }
 
 fn mouse_button_index(button: MouseButton) -> usize {
@@ -20,7 +20,7 @@ fn mouse_button_index(button: MouseButton) -> usize {
 }
 
 async fn run(
-    options: &Options,
+    options: Options,
     event_loop: EventLoop<()>,
     window: Window,
     swapchain_format: wgpu::TextureFormat,
@@ -64,9 +64,6 @@ async fn run(
         .await
         .expect("Failed to create device");
 
-    // Load the shaders from disk
-    let module = device.create_shader_module(&shader_module(options.shader));
-
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: None,
         bind_group_layouts: &[],
@@ -76,38 +73,62 @@ async fn run(
         }],
     });
 
-    let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: None,
-        layout: Some(&pipeline_layout),
-        vertex: wgpu::VertexState {
-            module: &module,
-            entry_point: "main_vs",
-            buffers: &[],
-        },
-        primitive: wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::TriangleList,
-            strip_index_format: None,
-            front_face: wgpu::FrontFace::Ccw,
-            cull_mode: wgpu::CullMode::None,
-            polygon_mode: wgpu::PolygonMode::Fill,
-        },
-        depth_stencil: None,
-        multisample: wgpu::MultisampleState {
-            count: 1,
-            mask: !0,
+    #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
+    let ((compile_sndr, compile_rcvr), mut is_compiling, proxy) = (
+        std::sync::mpsc::sync_channel::<Vec<u8>>(1),
+        false,
+        event_loop.create_proxy(),
+    );
+
+    #[cfg(any(target_os = "android", target_arch = "wasm32"))]
+    let module = {
+        let source = super::shader_module(options.shader);
+        device.create_shader_module(source)
+    };
+
+    #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
+    let module = {
+        let spv = super::compile_shader(options.shader);
+        let source = wgpu::util::make_spirv(&spv);
+        device.create_shader_module(source)
+    };
+
+    fn create_render_pipeline(
+        device: &wgpu::Device,
+        module: wgpu::ShaderModule,
+        pipeline_layout: &wgpu::PipelineLayout,
+        swapchain_format: wgpu::TextureFormat,
+    ) -> wgpu::RenderPipeline {
+        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: None,
+            layout: Some(pipeline_layout),
+            vertex_stage: wgpu::ProgrammableStageDescriptor {
+                module: &module,
+                entry_point: "main_vs",
+            },
+            fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
+                module: &module,
+                entry_point: "main_fs",
+            }),
+            // Use the default rasterizer state: no culling, no depth bias
+            rasterization_state: None,
+            primitive_topology: wgpu::PrimitiveTopology::TriangleList,
+            color_states: &[swapchain_format.into()],
+            depth_stencil_state: None,
+            vertex_state: wgpu::VertexStateDescriptor {
+                index_format: wgpu::IndexFormat::Uint16,
+                vertex_buffers: &[],
+            },
+            sample_count: 1,
+            sample_mask: !0,
             alpha_to_coverage_enabled: false,
-        },
-        fragment: Some(wgpu::FragmentState {
-            module: &module,
-            entry_point: "main_fs",
-            targets: &[wgpu::ColorTargetState {
-                format: swapchain_format,
-                alpha_blend: wgpu::BlendState::REPLACE,
-                color_blend: wgpu::BlendState::REPLACE,
-                write_mask: wgpu::ColorWrite::ALL,
-            }],
-        }),
-    });
+        })
+    }
+
+    // not mutated on Android/wasm32 targets
+    #[allow(unused_mut)]
+    let mut render_pipeline =
+        create_render_pipeline(&device, module, &pipeline_layout, swapchain_format);
 
     let mut sc_desc = wgpu::SwapChainDescriptor {
         usage: wgpu::TextureUsage::RENDER_ATTACHMENT,
@@ -129,12 +150,11 @@ async fn run(
     let mut mouse_button_pressed = 0;
     let mut mouse_button_press_since_last_frame = 0;
     let mut mouse_button_press_time = [f32::NEG_INFINITY; 3];
-
     event_loop.run(move |event, _, control_flow| {
         // Have the closure take ownership of the resources.
         // `event_loop.run` never returns, therefore we must do this to ensure
         // the resources are properly cleaned up.
-        let _ = (&instance, &adapter, &module, &pipeline_layout);
+        let _ = (&instance, &adapter, &pipeline_layout);
 
         *control_flow = ControlFlow::Wait;
         match event {
@@ -236,6 +256,48 @@ async fn run(
                     },
                 ..
             } => *control_flow = ControlFlow::Exit,
+            #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
+            Event::WindowEvent {
+                event:
+                    WindowEvent::KeyboardInput {
+                        input:
+                            KeyboardInput {
+                                virtual_keycode: Some(VirtualKeyCode::F5),
+                                ..
+                            },
+                        ..
+                    },
+                ..
+            } => {
+                if !is_compiling {
+                    is_compiling = true;
+                    let sndr = compile_sndr.clone();
+                    let proxy = proxy.clone();
+                    std::thread::spawn(move || {
+                        sndr.try_send(super::compile_shader(options.shader))
+                            .unwrap();
+                        proxy.send_event(()).unwrap();
+                    });
+                }
+            }
+            #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
+            Event::UserEvent(()) => match compile_rcvr.try_recv() {
+                Ok(spv) => {
+                    render_pipeline = create_render_pipeline(
+                        &device,
+                        device.create_shader_module(wgpu::util::make_spirv(&spv)),
+                        &pipeline_layout,
+                        swapchain_format,
+                    );
+                    is_compiling = false;
+                }
+                Err(err) => match err {
+                    std::sync::mpsc::TryRecvError::Empty => {}
+                    std::sync::mpsc::TryRecvError::Disconnected => {
+                        panic!("pipeline recreation channel disconnected unexpectedly")
+                    }
+                },
+            },
             Event::WindowEvent {
                 event: WindowEvent::MouseInput { state, button, .. },
                 ..
@@ -272,7 +334,7 @@ async fn run(
     });
 }
 
-pub fn start(options: &Options) {
+pub fn start(options: Options) {
     let event_loop = EventLoop::new();
     let window = winit::window::WindowBuilder::new()
         .with_title("Rust GPU - wgpu")
