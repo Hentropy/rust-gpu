@@ -322,6 +322,7 @@ fn trans_type_impl<'tcx>(
     ty: TyAndLayout<'tcx>,
     is_immediate: bool,
 ) -> Word {
+    let mut binding = None;
     if let TyKind::Adt(adt, substs) = *ty.ty.kind() {
         for attr in parse_attrs(cx, cx.tcx.get_attrs(adt.did)) {
             match attr {
@@ -384,11 +385,11 @@ fn trans_type_impl<'tcx>(
                 SpirvAttribute::Bind => {
                     let mut subst_types = substs.types();
                     if let (Some(desc_ty), None) = (subst_types.next(), subst_types.next()) {
-                        return trans_bind(cx, desc_ty, span);
+                        binding = Some(trans_bind(cx, desc_ty, span));
                     } else {
                         cx.tcx
                             .sess
-                            .span_fatal(span, "#[spirv(bind)] type storage class type paramter");
+                            .span_fatal(span, "#[spirv(bind)] type missing storage class type parameter");
                     }
                 }
                 _ => {}
@@ -409,10 +410,18 @@ fn trans_type_impl<'tcx>(
             is_block: false,
         }
         .def_with_name(cx, span, TyLayoutNameKey::from(ty)),
-        Abi::Scalar(ref scalar) => trans_scalar(cx, span, ty, scalar, None, is_immediate),
+        Abi::Scalar(ref scalar) => if let Some(binding) = binding {
+            binding
+        } else {
+            trans_scalar(cx, span, ty, scalar, None, is_immediate)
+        },
         Abi::ScalarPair(ref one, ref two) => {
             // Note! Do not pass through is_immediate here - they're wrapped in a struct, hence, not immediate.
-            let one_spirv = trans_scalar(cx, span, ty, one, Some(0), false);
+            let one_spirv = if let Some(binding) = binding {
+                binding
+            } else {
+                trans_scalar(cx, span, ty, one, Some(0), false)
+            };
             let two_spirv = trans_scalar(cx, span, ty, two, Some(1), false);
             // Note: We can't use auto_struct_layout here because the spirv types here might be undefined due to
             // recursive pointer types.
@@ -461,7 +470,7 @@ fn trans_bind<'tcx>(cx: &CodegenCx<'tcx>, desc_ty: Ty<'tcx>, span: Span) -> Word
         // NOTE: the element type may be unsized, so this cannot go through
         // the usual SpirvType constructor
         TyKind::Array(ty, count) => {
-            let data_type = if let TyKind::Adt(_, substs) = ty.kind() {
+            let mut data_type = if let TyKind::Adt(_, substs) = ty.kind() {
                 trans_type_impl(
                     cx,
                     span,
@@ -471,9 +480,21 @@ fn trans_bind<'tcx>(cx: &CodegenCx<'tcx>, desc_ty: Ty<'tcx>, span: Span) -> Word
             } else {
                 cx.tcx.sess.span_fatal(
                     span,
-                    "Bind storage class parameter must have data type parameter"
+                    "Storage class array must be array of ADTs."
                 )
             };
+            if let SpirvType::RuntimeArray { .. } = cx.lookup_type(data_type) {
+                data_type = SpirvType::Adt {
+                    def_id: None,
+                    size: None,
+                    align: cx.layout_of(ty).align.abi,
+                    field_types: vec![data_type],
+                    field_offsets: vec![Size::ZERO],
+                    field_names: None,
+                    is_block: false,
+                }
+                .def(span, cx);
+            }
             let count = cx.constant_u32(span, count.eval_usize(cx.tcx, cx.param_env()) as u32);
             let spirv_type = SpirvType::Array {
                 element: data_type,
@@ -499,7 +520,7 @@ fn trans_bind<'tcx>(cx: &CodegenCx<'tcx>, desc_ty: Ty<'tcx>, span: Span) -> Word
         // NOTE: the element type may be unsized, so this cannot go through
         // the usual SpirvType constructor
         TyKind::Slice(ty) => {
-            let data_type = if let TyKind::Adt(_, substs) = ty.kind() {
+            let mut data_type = if let TyKind::Adt(_, substs) = ty.kind() {
                 trans_type_impl(
                     cx,
                     span,
@@ -512,6 +533,18 @@ fn trans_bind<'tcx>(cx: &CodegenCx<'tcx>, desc_ty: Ty<'tcx>, span: Span) -> Word
                     "Bind storage class parameter must have data type parameter"
                 )
             };
+            if let SpirvType::RuntimeArray { .. } = cx.lookup_type(data_type) {
+                data_type = SpirvType::Adt {
+                    def_id: None,
+                    size: None,
+                    align: cx.layout_of(ty).align.abi,
+                    field_types: vec![data_type],
+                    field_offsets: vec![Size::ZERO],
+                    field_names: None,
+                    is_block: false,
+                }
+                .def(span, cx);
+            }
             let spirv_type = SpirvType::RuntimeArray { element: data_type };
             let mut type_cache_defs = cx.type_cache.type_defs.borrow_mut();
             if let Some(cached) = type_cache_defs.get_by_right(&spirv_type).copied() {

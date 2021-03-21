@@ -44,12 +44,21 @@ impl<'tcx> CodegenCx<'tcx> {
         for (abi, arg) in fn_abi.args.iter().zip(body.params) {
             if let PassMode::Direct(_) = abi.mode {
             } else if let PassMode::Pair(
-                // DST/RTA/VLA
+                // plain DST/RTA/VLA
                 ArgAttributes {
                     pointee_size: Size::ZERO,
                     ..
                 },
                 ArgAttributes { regular: EMPTY, .. },
+            ) = abi.mode
+            {
+            } else if let PassMode::Pair(
+                // DST struct with fields before the DST member
+                ArgAttributes { .. },
+                ArgAttributes {
+                    pointee_size: Size::ZERO,
+                    ..
+                },
             ) = abi.mode
             {
             } else {
@@ -106,7 +115,7 @@ impl<'tcx> CodegenCx<'tcx> {
             arguments: vec![],
         }
         .def(span, self);
-        let (entry_func_return_type, entry_func_args) = match self.lookup_type(entry_func.ty) {
+        let (entry_func_return_type, entry_func_arg_types) = match self.lookup_type(entry_func.ty) {
             SpirvType::Function {
                 return_type,
                 arguments,
@@ -121,73 +130,61 @@ impl<'tcx> CodegenCx<'tcx> {
         let new_spirv = self.emit_global().version().unwrap() > (1, 3);
         let arg_len = arg_abis.len();
         let mut arguments = Vec::with_capacity(arg_len);
-        let mut interface = if new_spirv {
-            Vec::with_capacity(arg_len)
-        } else {
-            Vec::with_capacity(arg_len / 2)
-        };
-        //let mut rta_lens = Vec::with_capacity(arg_len / 4);
-        let mut entry_args = entry_func_args.iter();
+        let mut interface = Vec::with_capacity(arg_len);
+        let mut rta_lens = Vec::with_capacity(arg_len / 2);
+        let mut arg_types = entry_func_arg_types.iter();
         for (hir_param, arg_abi) in hir_params.iter().zip(arg_abis) {
-            let arg = *entry_args.next().unwrap_or_else(|| {
+            // explicit next because there are two args for scalar pairs, but only one param & abi
+            let arg_t = *arg_types.next().unwrap_or_else(|| {
                 self.tcx.sess.span_fatal(
                     hir_param.span,
                     &format!(
-                        "Invalid function arguments: Param {:?} Abi {:?} missing Word",
+                        "Invalid function arguments: Param {:?} Abi {:?} missing type",
                         hir_param, arg_abi.layout.ty
                     ),
                 )
             });
             let (argument, storage_class) =
-                self.declare_parameter(arg, hir_param, arg_abi, &mut decoration_locations);
+                self.declare_parameter(arg_t, hir_param, arg_abi, &mut decoration_locations);
+            // SPIR-V <= v1.3 only includes Input and Output in the interface.
             if new_spirv
                 || storage_class == StorageClass::Input
                 || storage_class == StorageClass::Output
             {
-                // SPIR-V <= v1.3 only includes Input and Output in the interface.
                 interface.push(argument);
             }
             arguments.push(argument);
-            //if let SpirvType::Pointer { pointee } = self.lookup_type(arg) {
-            //    let spv_ty = self.lookup_type(pointee);
-            //    // TODO check if the RTA elem type is an Image and do not generate a len
-            //    if let SpirvType::RuntimeArray { element } = spv_ty {
-            //        let len_t = *entry_args.next().unwrap();
-            //        if let SpirvType::Image {..} = self.lookup_type(element) {
-            //            arguments.push(u32::MAX);
-            //            continue;
-            //        }
-            //        let struct_rta_t = SpirvType::Adt {
-            //            def_id: None,
-            //            align: spv_ty.alignof(self),
-            //            size: None,
-            //            field_types: vec![pointee],
-            //            field_offsets: vec![Size::ZERO],
-            //            field_names: None,
-            //            is_block: false,
-            //        }
-            //        .def(Span::default(), self);
-            //        let ptr_struct_rta_t =
-            //            self.emit_global()
-            //                .type_pointer(None, storage_class, struct_rta_t);
-            //        rta_lens.push((arguments.len() as u32, ptr_struct_rta_t, len_t));
-            //        arguments.push(u32::MAX);
-            //    }
-            //}
+            if let SpirvType::Pointer { pointee } = self.lookup_type(arg_t) {
+                if let SpirvType::Adt {
+                    size: None,
+                    field_types,
+                    ..
+                } = self.lookup_type(pointee)
+                {
+                    let len_t = *arg_types.next().unwrap_or_else(|| {
+                        self.tcx.sess.span_fatal(
+                            hir_param.span,
+                            &format!(
+                                "Invalid function arguments: Param {:?} Abi {:?} fat pointer missing length",
+                                hir_param, arg_abi.layout.ty
+                            ),
+                        )
+                    });
+                    rta_lens.push((arguments.len() as u32, len_t, field_types.len() as u32 - 1));
+                    arguments.push(u32::MAX);
+                }
+            }
         }
         let mut emit = self.emit_global();
         let fn_id = emit
             .begin_function(void, None, FunctionControl::NONE, fn_void_void)
             .unwrap();
         emit.begin_block(None).unwrap();
-        // add OpArrayLength, make fat pointer struct, pass that into function
-        //for (len_idx, ptr_struct_rta_t, len_t) in rta_lens {
-        //    let ptr_struct_rta = emit
-        //        .bitcast(ptr_struct_rta_t, None, arguments[(len_idx - 1) as usize])
-        //        .unwrap();
-        //    arguments[len_idx as usize] =
-        //        emit.array_length(len_t, None, ptr_struct_rta, 0).unwrap();
-        //}
+        rta_lens.iter().for_each(|&(len_idx, len_t, member_idx)| {
+            arguments[len_idx as usize] = emit
+                .array_length(len_t, None, arguments[len_idx as usize - 1], member_idx)
+                .unwrap()
+        });
         emit.function_call(
             entry_func_return_type,
             None,

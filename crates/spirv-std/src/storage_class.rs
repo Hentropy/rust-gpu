@@ -19,15 +19,13 @@ use core::{
 /// Slices/runtime arrays are not supported yet.
 #[allow(unused_attributes)]
 #[spirv(uniform)]
-pub struct Uniform<'a, T> {
-    _ptr: &'a mut T,
-}
+pub struct Uniform<T: ?Sized>(PhantomData<T>);
 
-impl<'a, T> StorageClass for Uniform<'a, T> {
+impl<T: ?Sized> StorageClass for Uniform<T> {
     type Target = T;
 }
 
-impl<'a, T> StorageClassMut for Uniform<'a, T> {}
+impl<T: ?Sized> StorageClassMut for Uniform<T> {}
 
 /// Graphics storage buffers (buffer blocks).
 ///
@@ -36,15 +34,13 @@ impl<'a, T> StorageClassMut for Uniform<'a, T> {}
 /// Slices/runtime arrays are not supported yet.
 #[allow(unused_attributes)]
 #[spirv(storage_buffer)]
-pub struct StorageBuffer<'a, T> {
-    _ptr: &'a mut T,
-}
+pub struct StorageBuffer<T: ?Sized>(PhantomData<T>);
 
-impl<'a, T> StorageClass for StorageBuffer<'a, T> {
+impl<T: ?Sized> StorageClass for StorageBuffer<T> {
     type Target = T;
 }
 
-impl<'a, T> StorageClassMut for StorageBuffer<'a, T> {}
+impl<T: ?Sized> StorageClassMut for StorageBuffer<T> {}
 
 /// Graphics uniform memory. OpenCL constant memory.
 ///
@@ -54,11 +50,9 @@ impl<'a, T> StorageClassMut for StorageBuffer<'a, T> {}
 /// Slices/runtime arrays are not supported yet.
 #[allow(unused_attributes)]
 #[spirv(uniform_constant)]
-pub struct UniformConstant<'a, T> {
-    _ptr: &'a T,
-}
+pub struct UniformConstant<T: ?Sized>(PhantomData<T>);
 
-impl<'a, T> StorageClass for UniformConstant<'a, T> {
+impl<T: ?Sized> StorageClass for UniformConstant<T> {
     type Target = T;
 }
 
